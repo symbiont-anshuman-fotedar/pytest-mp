@@ -12,6 +12,7 @@ def pytest_addoption(parser):
 
     mp_help = 'Distribute test groups via multiprocessing.'
     group.addoption('--mp', '--multiprocessing', action='store_true', dest='use_mp', default=None, help=mp_help)
+    group.addoption('--mp-pattern', '--mpp', type=str, action='store', dest='mp_pattern', default=None, help=mp_help)
 
     np_help = 'Set the concurrent worker amount (defaults to cpu count).  Value of 0 disables pytest-mp.'
     group.addoption('--np', '--num-processes', type=int, action='store', dest='num_processes', help=np_help)
@@ -23,7 +24,10 @@ def pytest_addoption(parser):
     # :copyright: (c) 2013-2016 by Janne Vanhala.
     # since it isn't compatible w/ MPTerminalReporter
 
-    group.addoption('--instafail', action="store_true", dest="instafail", default=False,
+    group.addoption('--instafail',
+                    action="store_true",
+                    dest="instafail",
+                    default=False,
                     help="show failures and errors instantly as they occur (disabled by default).")
 
 
@@ -86,12 +90,13 @@ def mp_trail():
 
 
 def load_mp_options(session):
-    """Return use_mp, num_processes from pytest session"""
+    """Return use_mp, mp_pattern, num_processes from pytest session"""
     if session.config.option.use_mp is None:
         if not session.config.getini('mp'):
             state_fixtures['use_mp'] = False
             state_fixtures['num_processes'] = 0
-            return False, 0
+            state_fixtures['mp_pattern'] = None
+            return False, None, 0
 
     if hasattr(session.config.option, 'num_processes') and session.config.option.num_processes is not None:
         num_processes = session.config.option.num_processes
@@ -106,12 +111,18 @@ def load_mp_options(session):
         except ValueError:
             raise ValueError('--num-processes must be an integer.')
 
+    if hasattr(session.config.option, 'mp_pattern') and session.config.option.mp_pattern is not None:
+        mp_pattern = session.config.option.mp_pattern
+    else:
+        mp_pattern = None
+
     state_fixtures['use_mp'] = True
     state_fixtures['num_processes'] = num_processes
-    return True, num_processes
+    state_fixtures['mp_pattern'] = mp_pattern
+    return True, mp_pattern, num_processes
 
 
-def get_item_batch_name_and_strategy(item):
+def get_item_batch_name_and_strategy(item, mp_pattern=None):
     # First check if there is more than one mark for mp_group
     markers = [mark for mark in item.iter_markers() if mark.name == 'mp_group']
     if len(markers) > 1:
@@ -119,7 +130,10 @@ def get_item_batch_name_and_strategy(item):
 
     marker = item.get_closest_marker('mp_group')
     if marker is None:
-        return None, None
+        if mp_pattern is not None and mp_pattern in str(item.fspath):
+            return mp_pattern, 'serial'
+        else:
+            return None, 'isolated_serial'
 
     group_name = None
     group_strategy = None
@@ -151,10 +165,10 @@ def batch_tests(session):
     batches = collections.OrderedDict()
 
     for item in session.items:
-        group_name, group_strategy = get_item_batch_name_and_strategy(item)
+        group_name, group_strategy = get_item_batch_name_and_strategy(item, mp_pattern=session.config.option.mp_pattern)
 
         if group_name is None:
-            item.add_marker(pytest.mark.mp_group_info.with_args(group='ungrouped', strategy='free'))
+            item.add_marker(pytest.mark.mp_group.with_args(group='ungrouped', strategy='free'))
             if 'ungrouped' not in batches:
                 batches['ungrouped'] = dict(strategy='free', tests=[])
             batches['ungrouped']['tests'].append(item)
@@ -162,11 +176,11 @@ def batch_tests(session):
             if group_strategy is None:
                 group_strategy = batches.get(group_name, {}).get('strategy') or 'free'
             elif 'strategy' in batches.get(group_name, []) and batches[group_name]['strategy'] != group_strategy:
-                raise Exception("{} already has specified strategy {}."
-                                .format(group_name, batches[group_name]['strategy']))
+                raise Exception("{} already has specified strategy {}.".format(group_name,
+                                                                               batches[group_name]['strategy']))
             if group_name not in batches:
                 batches[group_name] = dict(strategy=group_strategy, tests=[])
-            item.add_marker(pytest.mark.mp_group_info.with_args(group=group_name, strategy=group_strategy))
+            item.add_marker(pytest.mark.mp_group.with_args(group=group_name, strategy=group_strategy))
             batches[group_name]['tests'].append(item)
 
     total_tests = 0
@@ -209,7 +223,6 @@ def submit_test_to_process(test, session):
 
 
 def submit_batch_to_process(batch, session):
-
     def run_batch(tests, finished_signal):
         for i, test in enumerate(tests):
             next_test = tests[i + 1] if i + 1 < len(tests) else None
@@ -332,7 +345,7 @@ def pytest_runtestloop(session):
     if session.config.option.collectonly:
         return True
 
-    use_mp, num_processes = load_mp_options(session)
+    use_mp, mp_pattern, num_processes = load_mp_options(session)
 
     batches = batch_tests(session)
 
@@ -352,7 +365,7 @@ def pytest_runtestloop(session):
     synchronization['finished_pids'] = manager.dict()
     synchronization['processes'] = dict()
 
-    proc_loop = multiprocessing.Process(target=process_loop, args=(num_processes,))
+    proc_loop = multiprocessing.Process(target=process_loop, args=(num_processes, ))
     proc_loop.start()
 
     run_batched_tests(batches, session, num_processes)
@@ -377,10 +390,10 @@ def pytest_runtest_logreport(report):
 
 @pytest.mark.trylast
 def pytest_configure(config):
-    config.addinivalue_line('markers',
-                            "mp_group('GroupName', strategy): test (suite) is in named "
-                            "grouped w/ desired strategy: 'free' (default), 'serial', "
-                            "'isolated_free', or 'isolated_serial'.")
+    config.addinivalue_line(
+        'markers', "mp_group('GroupName', strategy): test (suite) is in named "
+        "grouped w/ desired strategy: 'free' (default), 'serial', "
+        "'isolated_free', or 'isolated_serial'.")
 
     standard_reporter = config.pluginmanager.get_plugin('terminalreporter')
     if standard_reporter:
