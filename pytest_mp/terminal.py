@@ -14,7 +14,7 @@ class MPTerminalReporter(TerminalReporter):
 
     def __init__(self, reporter, manager):
         TerminalReporter.__init__(self, reporter.config)
-        self._tw = self.writer = reporter.writer  # some monkeypatching needed to access existing writer
+        self._tw = reporter.writer  # some monkeypatching needed to access existing writer
         self.manager = manager
         self.stats = dict()
         self.stat_keys = ['passed', 'failed', 'error', 'skipped', 'warnings', 'xpassed', 'xfailed', '']
