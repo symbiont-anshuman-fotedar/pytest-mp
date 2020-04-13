@@ -133,7 +133,7 @@ def get_item_batch_name_and_strategy(item, mp_pattern=None):
     marker = item.get_closest_marker('mp_group')
     if marker is None:
         if mp_pattern is not None and mp_pattern in str(item.fspath):
-            return mp_pattern, 'serial'
+            return item.fspath, 'serial'
         else:
             return None, 'isolated_serial'
 
