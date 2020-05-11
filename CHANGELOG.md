@@ -1,3 +1,6 @@
+## 0.0.5
+* Multiple bugfixes
+
 ## 0.0.4
 * Minor bugfix for calling pytest with --collectonly
 

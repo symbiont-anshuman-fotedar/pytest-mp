@@ -5,7 +5,7 @@ from setuptools.command.test import test as TestCommand
 from setuptools import setup, find_packages
 
 
-version = '0.0.4'
+version = '0.0.5'
 
 
 class Tox(TestCommand):
@@ -32,7 +32,7 @@ setup(name='pytest-mp',
       long_description_markdown_filename='README.md',
       py_modules=['pytest_mp'],
       packages=find_packages(),
-      install_requires=['pytest', 'psutil'],
+      install_requires=['pytest==5.4.2', 'psutil'],
       setup_requires=['setuptools-markdown'],
       tests_require=['pytest', 'tox'],
       classifiers=['Development Status :: 4 - Beta',
